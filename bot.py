@@ -13,7 +13,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 # --- НАСТРОЙКИ ---
-BOT_TOKEN = "8709792380:AAFQnlj8iAhHdQbQBKMgilqyi_061FJKw"
+BOT_TOKEN = "8709792380:AAEaoUeyzfnrZnqPVzMrTUygXZWwBIqm-zI"
 ADMIN_ID = 5450050924
 REVIEWS_CHANNEL = "@Otziv_donatshop"
 SUPPORT_USERNAME = "Abdulega"
