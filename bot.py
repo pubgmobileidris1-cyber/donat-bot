@@ -2,7 +2,9 @@ import logging
 import asyncio
 import sqlite3
 import random
+import os
 import aiohttp
+from aiohttp import web
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
@@ -16,7 +18,7 @@ ADMIN_ID = 5450050924
 REVIEWS_CHANNEL = "@Otziv_donatshop"
 SUPPORT_USERNAME = "Abdulega"
 
-# ПРАВИЛЬНЫЕ РЕКВИЗИТЫ
+# РЕКВИЗИТЫ
 DC_CARD = "9762 0002 2654 6264"
 DC_NAME = "KURBONOVA N"
 ALIF_ACCOUNT = "900163322"
@@ -72,18 +74,14 @@ class BuyState(StatesGroup):
     waiting_for_uid = State()
     confirm_payment = State()
 
-# --- ПРОВЕРКА FREE FIRE ID (МУЛЬТИРЕГИОН RU/CIS/SG) ---
+# --- ПРОВЕРКА FREE FIRE ID (МУЛЬТИРЕГИОН) ---
 async def check_freefire_id(uid: str):
     uid = uid.strip()
     if not uid.isdigit() or not (7 <= len(uid) <= 12):
         return False, None
 
-    # Попытка 1: Сервер мульти-региона (включая RU)
     url_ru = f"https://free-ff-api-src-5plp.onrender.com/api/v1/account?region=RU&uid={uid}"
-    
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-    }
+    headers = {"User-Agent": "Mozilla/5.0"}
     
     try:
         async with aiohttp.ClientSession() as session:
@@ -94,7 +92,6 @@ async def check_freefire_id(uid: str):
                     if nickname:
                         return True, nickname
 
-            # Попытка 2: Сервер Vyturex
             url2 = f"https://api.vyturex.com/ff?uid={uid}"
             async with session.get(url2, headers=headers, timeout=4) as response2:
                 if response2.status == 200:
@@ -102,19 +99,9 @@ async def check_freefire_id(uid: str):
                     nickname2 = data2.get("nickname") or data2.get("name")
                     if nickname2:
                         return True, nickname2
-
-            # Попытка 3: Ищем через открытый поиск Garena
-            url3 = f"https://freefireinfo-zy9l.onrender.com/api/v1/player-profile?uid={uid}"
-            async with session.get(url3, headers=headers, timeout=4) as response3:
-                if response3.status == 200:
-                    data3 = await response3.json()
-                    nickname3 = data3.get("basicInfo", {}).get("nickname")
-                    if nickname3:
-                        return True, nickname3
     except Exception:
         pass
 
-    # Если API заблокирован или временно отвалился — не блокируем клиентов!
     return True, "Player Account"
 
 # --- КЛАВИАТУРЫ ---
@@ -243,7 +230,6 @@ async def select_item(callback: types.CallbackQuery, state: FSMContext):
     )
     await callback.answer()
 
-# ОБРАБОТКА ВВОДА ID
 @dp.message(BuyState.waiting_for_uid)
 async def process_buy_uid(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
@@ -319,7 +305,6 @@ async def pay_from_balance(callback: types.CallbackQuery, state: FSMContext):
     new_bal = get_balance(user_id)
     order_id = random.randint(2000, 9999)
 
-    # Уведомление админу
     admin_order_msg = (
         f"🚀 <b>НОВЫЙ ЗАКАЗ (ОПЛАЧЕНО С БАЛАНСА)!</b>\n\n"
         f"📄 Заказ №: <b>#{order_id}</b>\n"
@@ -331,7 +316,6 @@ async def pay_from_balance(callback: types.CallbackQuery, state: FSMContext):
     )
     await bot.send_message(chat_id=ADMIN_ID, text=admin_order_msg, parse_mode="HTML")
 
-    # Чек покупателю
     receipt_text = (
         f"📄 <b>ЧЕКИ ХАРИД</b>\n"
         f"----------------------------------------\n"
@@ -490,8 +474,24 @@ async def admin_reject_dep(callback: types.CallbackQuery):
         pass
     await callback.answer("Отклонено!")
 
+# --- МИНИ-ВЕБСЕРВЕР ДЛЯ РЕНДЕРА (ЧТОБЫ СЕРВЕР НЕ ОТКЛЮЧАЛ БОТА) ---
+async def handle_ping(request):
+    return web.Response(text="Bot is live!")
+
+async def start_web_server():
+    app = web.Application()
+    app.router.add_get("/", handle_ping)
+    app.router.add_get("/health", handle_ping)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = int(os.environ.get("PORT", 10000))
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    print(f"Веб-сервер запущен на порту {port}")
+
 async def main():
-    print("Бот успешно запущен!")
+    print("Запуск бота и веб-сервера...")
+    await start_web_server()
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
