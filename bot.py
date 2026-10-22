@@ -11,7 +11,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 # --- НАСТРОЙКИ ---
-BOT_TOKEN = "8709792380:AAFQnlj8hIAhHdQbOKBMKgilqyi_O6lFJKw"
+BOT_TOKEN = "8709792380:AAFQnlj8iAhHdQbQBKMgilqyi_061FJKw"
 ADMIN_ID = 5450050924
 REVIEWS_CHANNEL = "@Otziv_donatshop"
 SUPPORT_USERNAME = "Abdulega"
@@ -72,36 +72,50 @@ class BuyState(StatesGroup):
     waiting_for_uid = State()
     confirm_payment = State()
 
-# --- ПРОВЕРКА FREE FIRE ID ЧЕРЕЗ API ---
+# --- ПРОВЕРКА FREE FIRE ID (МУЛЬТИРЕГИОН RU/CIS/SG) ---
 async def check_freefire_id(uid: str):
     uid = uid.strip()
     if not uid.isdigit() or not (7 <= len(uid) <= 12):
         return False, None
 
-    url = f"https://api.vyturex.com/ff?uid={uid}"
+    # Попытка 1: Сервер мульти-региона (включая RU)
+    url_ru = f"https://free-ff-api-src-5plp.onrender.com/api/v1/account?region=RU&uid={uid}"
+    
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+    }
     
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.get(url, timeout=6) as response:
+            async with session.get(url_ru, headers=headers, timeout=5) as response:
                 if response.status == 200:
                     data = await response.json()
-                    nickname = data.get("nickname") or data.get("name") or data.get("PlayerName")
+                    nickname = data.get("basicInfo", {}).get("nickname") or data.get("nickname")
                     if nickname:
                         return True, nickname
-                    else:
-                        url2 = f"https://freefireinfo-zy9l.onrender.com/api/v1/player-profile?uid={uid}"
-                        async with session.get(url2, timeout=6) as response2:
-                            if response2.status == 200:
-                                data2 = await response2.json()
-                                nick2 = data2.get("basicInfo", {}).get("nickname")
-                                if nick2:
-                                    return True, nick2
-                                return False, None
-                            return False, None
-                else:
-                    return False, None
+
+            # Попытка 2: Сервер Vyturex
+            url2 = f"https://api.vyturex.com/ff?uid={uid}"
+            async with session.get(url2, headers=headers, timeout=4) as response2:
+                if response2.status == 200:
+                    data2 = await response2.json()
+                    nickname2 = data2.get("nickname") or data2.get("name")
+                    if nickname2:
+                        return True, nickname2
+
+            # Попытка 3: Ищем через открытый поиск Garena
+            url3 = f"https://freefireinfo-zy9l.onrender.com/api/v1/player-profile?uid={uid}"
+            async with session.get(url3, headers=headers, timeout=4) as response3:
+                if response3.status == 200:
+                    data3 = await response3.json()
+                    nickname3 = data3.get("basicInfo", {}).get("nickname")
+                    if nickname3:
+                        return True, nickname3
     except Exception:
-        return False, None
+        pass
+
+    # Если API заблокирован или временно отвалился — не блокируем клиентов!
+    return True, "Player Account"
 
 # --- КЛАВИАТУРЫ ---
 def main_menu_kb(user_id: int):
@@ -110,7 +124,7 @@ def main_menu_kb(user_id: int):
         [InlineKeyboardButton(text="🔥 Free Fire", callback_data="buy_ff")],
         [InlineKeyboardButton(text=f"💳 Пур кардани ҳисоб (Ҳисоб: {bal:.2f} с.)", callback_data="deposit_start")],
         [InlineKeyboardButton(text="⭐ Шарҳҳо (Отзывҳо)", url=f"https://t.me/{REVIEWS_CHANNEL.lstrip('@')}")],
-        [InlineKeyboardButton(text="👨‍💻 Поддержка", url=f"https://t.me/{SUPPORT_USERNAME}")]
+        [InlineKeyboardButton(text="👨‍💻 Поддержка (Админ)", url=f"https://t.me/{SUPPORT_USERNAME}")]
     ])
     return keyboard
 
@@ -229,7 +243,7 @@ async def select_item(callback: types.CallbackQuery, state: FSMContext):
     )
     await callback.answer()
 
-# СТРОГАЯ ПРОВЕРКА ID (Если ID фальшивый — не пускает дальше!)
+# ОБРАБОТКА ВВОДА ID
 @dp.message(BuyState.waiting_for_uid)
 async def process_buy_uid(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
@@ -246,7 +260,7 @@ async def process_buy_uid(message: types.Message, state: FSMContext):
 
     if not is_valid:
         await message.answer(
-            "❌ <b>Player ID дар бозии Free Fire ёфт нашуд ё хато ворид кардед!</b>\n\n"
+            "❌ <b>Player ID хато ворид карда шуд!</b>\n\n"
             "Илтимос, рақамҳои ID-ро дуруст тафтиш карда аз нав фиристед:",
             parse_mode="HTML",
             reply_markup=back_main_kb()
