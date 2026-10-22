@@ -13,7 +13,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 # --- НАСТРОЙКИ ---
-BOT_TOKEN = "8709792380:AAEaoUeyzfnrZnqPVzMrTUygXZWwBIqm-zI"
+BOT_TOKEN = "8709792380:AAFQnlj8iAhHdQbQBKMgilqyi_061FJKw"
 ADMIN_ID = 5450050924
 REVIEWS_CHANNEL = "@Otziv_donatshop"
 SUPPORT_USERNAME = "Abdulega"
@@ -22,6 +22,9 @@ SUPPORT_USERNAME = "Abdulega"
 DC_CARD = "9762 0002 2654 6264"
 DC_NAME = "KURBONOVA N"
 ALIF_ACCOUNT = "900163322"
+
+# Картинка Аниме (Клинок рассекающий демонов)
+ANIME_IMAGE = "https://i.ibb.co/vzR3X3m/demon-slayer.jpg"
 
 logging.basicConfig(level=logging.INFO)
 
@@ -73,424 +76,409 @@ class DepositState(StatesGroup):
 class BuyState(StatesGroup):
     waiting_for_uid = State()
     confirm_payment = State()
+    waiting_for_direct_receipt = State()
 
-# --- ПРОВЕРКА FREE FIRE ID (МУЛЬТИРЕГИОН) ---
-async def check_freefire_id(uid: str):
+# --- ПРОВЕРКА ID (C НОВЫМ NFTOKEN API) ---
+async def check_player_id(game: str, uid: str):
     uid = uid.strip()
-    if not uid.isdigit() or not (7 <= len(uid) <= 12):
+    if not uid.isdigit() or not (6 <= len(uid) <= 12):
         return False, None
 
-    url_ru = f"https://free-ff-api-src-5plp.onrender.com/api/v1/account?region=RU&uid={uid}"
     headers = {"User-Agent": "Mozilla/5.0"}
-    
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url_ru, headers=headers, timeout=5) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    nickname = data.get("basicInfo", {}).get("nickname") or data.get("nickname")
-                    if nickname:
-                        return True, nickname
 
-            url2 = f"https://api.vyturex.com/ff?uid={uid}"
-            async with session.get(url2, headers=headers, timeout=4) as response2:
-                if response2.status == 200:
-                    data2 = await response2.json()
-                    nickname2 = data2.get("nickname") or data2.get("name")
-                    if nickname2:
-                        return True, nickname2
-    except Exception:
-        pass
+    if game == "ff":
+        # 1. Пробуем новые эндпоинты nftoken.info
+        url_nftoken1 = f"https://api2.nftoken.info/player-info?uid={uid}"
+        url_nftoken2 = f"https://api2.nftoken.info/get?uid={uid}"
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                # Запрос к player-info
+                async with session.get(url_nftoken1, headers=headers, timeout=4) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        nick = (
+                            data.get("nickname") or 
+                            data.get("name") or 
+                            data.get("basicInfo", {}).get("nickname") or 
+                            data.get("data", {}).get("nickname")
+                        )
+                        if nick:
+                            return True, nick
 
-    return True, "Player Account"
+                # Запрос к /get
+                async with session.get(url_nftoken2, headers=headers, timeout=4) as resp2:
+                    if resp2.status == 200:
+                        data2 = await resp2.json()
+                        nick2 = (
+                            data2.get("nickname") or 
+                            data2.get("name") or 
+                            data2.get("basicInfo", {}).get("nickname")
+                        )
+                        if nick2:
+                            return True, nick2
+
+                # Запасной сервер RU-региона
+                url_ru = f"https://free-ff-api-src-5plp.onrender.com/api/v1/account?region=RU&uid={uid}"
+                async with session.get(url_ru, headers=headers, timeout=4) as resp3:
+                    if resp3.status == 200:
+                        data3 = await resp3.json()
+                        nick3 = data3.get("basicInfo", {}).get("nickname") or data3.get("nickname")
+                        if nick3:
+                            return True, nick3
+        except Exception:
+            pass
+
+        return True, "Игрок Free Fire"
+
+    elif game == "pubg":
+        return True, f"PUBG Player ({uid})"
+
+    elif game == "codm":
+        return True, f"CODM Player ({uid})"
+
+    return True, "Игрок"
 
 # --- КЛАВИАТУРЫ ---
 def main_menu_kb(user_id: int):
     bal = get_balance(user_id)
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔥 Free Fire", callback_data="buy_ff")],
-        [InlineKeyboardButton(text=f"💳 Пур кардани ҳисоб (Ҳисоб: {bal:.2f} с.)", callback_data="deposit_start")],
+        [InlineKeyboardButton(text="🎮 Бозиҳо", callback_data="open_games")],
+        [InlineKeyboardButton(text=f"💼 Баланси ман ({bal:.2f} смн)", callback_data="deposit_start")],
         [InlineKeyboardButton(text="⭐ Шарҳҳо (Отзывҳо)", url=f"https://t.me/{REVIEWS_CHANNEL.lstrip('@')}")],
         [InlineKeyboardButton(text="👨‍💻 Поддержка (Админ)", url=f"https://t.me/{SUPPORT_USERNAME}")]
     ])
     return keyboard
 
+def games_menu_kb():
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Free Fire 🔥", callback_data="game_ff")],
+        [InlineKeyboardButton(text="PUBG Mobile 🎯", callback_data="game_pubg")],
+        [InlineKeyboardButton(text="Call of Duty Mobile 🔫", callback_data="game_codm")],
+        [InlineKeyboardButton(text="🏠 Менюи асосӣ", callback_data="back_to_main")]
+    ])
+    return keyboard
+
 def ff_categories_kb():
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💎 Алмосҳо", callback_data="cat_diamonds")],
-        [InlineKeyboardButton(text="🎟️ Ваучерҳо", callback_data="cat_vouchers")],
+        [InlineKeyboardButton(text="💎 Алмосҳо", callback_data="cat_ff_diamonds")],
+        [InlineKeyboardButton(text="🎟️ Ваучерҳо", callback_data="cat_ff_vouchers")],
+        [InlineKeyboardButton(text="⬅️ Бозгашт", callback_data="open_games")],
+        [InlineKeyboardButton(text="🏠 Менюи асосӣ", callback_data="back_to_main")]
+    ])
+    return keyboard
+
+def pubg_items_kb():
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="60 UC — 9.90 смн", callback_data="item_pubg_60_9.90")],
+        [InlineKeyboardButton(text="300 + 25 UC — 48.00 смн", callback_data="item_pubg_325_48.00")],
+        [InlineKeyboardButton(text="600 + 60 UC — 95.00 смн", callback_data="item_pubg_660_95.00")],
+        [InlineKeyboardButton(text="1500 + 300 UC — 245.00 смн", callback_data="item_pubg_1800_245.00")],
+        [InlineKeyboardButton(text="3000 + 850 UC — 489.00 смн", callback_data="item_pubg_3850_489.00")],
+        [InlineKeyboardButton(text="6000 + 2100 UC — 969.00 смн", callback_data="item_pubg_8100_969.00")],
+        [InlineKeyboardButton(text="⬅️ Бозгашт", callback_data="open_games")],
+        [InlineKeyboardButton(text="🏠 Менюи асосӣ", callback_data="back_to_main")]
+    ])
+    return keyboard
+
+def codm_items_kb():
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="80 CP — 12.00 смн", callback_data="item_codm_80_12.00")],
+        [InlineKeyboardButton(text="420 CP — 58.00 смн", callback_data="item_codm_420_58.00")],
+        [InlineKeyboardButton(text="880 CP — 115.00 смн", callback_data="item_codm_880_115.00")],
+        [InlineKeyboardButton(text="⬅️ Бозгашт", callback_data="open_games")],
         [InlineKeyboardButton(text="🏠 Менюи асосӣ", callback_data="back_to_main")]
     ])
     return keyboard
 
 def ff_diamonds_kb():
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🛒 100 💎 + 10 💎 (8.80 с.)", callback_data="item_100_8.80")],
-        [InlineKeyboardButton(text="🛒 310 💎 + 30 💎 (26.50 с.)", callback_data="item_310_26.50")],
-        [InlineKeyboardButton(text="🛒 520 💎 + 50 💎 (44.00 с.)", callback_data="item_520_44.00")],
-        [InlineKeyboardButton(text="🛒 1060 💎 + 100 💎 (88.00 с.)", callback_data="item_1060_88.00")],
-        [InlineKeyboardButton(text="🔙 Бозгашт", callback_data="buy_ff")]
+        [InlineKeyboardButton(text="🛒 100 💎 + 10 💎 (8.80 смн)", callback_data="item_ff_100_8.80")],
+        [InlineKeyboardButton(text="🛒 310 💎 + 30 💎 (26.50 смн)", callback_data="item_ff_310_26.50")],
+        [InlineKeyboardButton(text="🛒 520 💎 + 50 💎 (44.00 смн)", callback_data="item_ff_520_44.00")],
+        [InlineKeyboardButton(text="🛒 1060 💎 + 100 💎 (88.00 смн)", callback_data="item_ff_1060_88.00")],
+        [InlineKeyboardButton(text="⬅️ Бозгашт", callback_data="game_ff")]
     ])
     return keyboard
 
 def ff_vouchers_kb():
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔹 Ваучери Лайт (Weekly Lite) - 5.00 с.", callback_data="item_vlite_5.00")],
-        [InlineKeyboardButton(text="💳 Ваучери Ҳафтаина (Weekly) - 18.00 с.", callback_data="item_vweek_18.00")],
-        [InlineKeyboardButton(text="🌟 Ваучери Моҳона (Monthly) - 88.00 с.", callback_data="item_vmonth_88.00")],
-        [InlineKeyboardButton(text="🔙 Бозгашт", callback_data="buy_ff")]
+        [InlineKeyboardButton(text="🔹 Ваучери Лайт (Weekly Lite) - 5.00 смн", callback_data="item_ff_vlite_5.00")],
+        [InlineKeyboardButton(text="💳 Ваучери Ҳафтаина (Weekly) - 18.00 смн", callback_data="item_ff_vweek_18.00")],
+        [InlineKeyboardButton(text="🌟 Ваучери Моҳона (Monthly) - 88.00 смн", callback_data="item_ff_vmonth_88.00")],
+        [InlineKeyboardButton(text="⬅️ Бозгашт", callback_data="game_ff")]
     ])
     return keyboard
 
-def deposit_amounts_kb():
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="20.00 с.", callback_data="dep_20"), InlineKeyboardButton(text="50.00 с.", callback_data="dep_50")],
-        [InlineKeyboardButton(text="100.00 с.", callback_data="dep_100"), InlineKeyboardButton(text="200.00 с.", callback_data="dep_200")],
-        [InlineKeyboardButton(text="✏️ Маблағи дигар", callback_data="dep_custom")],
+def bank_choice_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🏦 Dushanbe City", callback_data="bank_dc"), InlineKeyboardButton(text="📲 Alif Mobi", callback_data="bank_alif")],
         [InlineKeyboardButton(text="🏠 Менюи асосӣ", callback_data="back_to_main")]
     ])
-    return keyboard
 
 def back_main_kb():
     return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🏠 Менюи асосӣ", callback_data="back_to_main")]])
 
-# --- СТАРТ ---
+# --- ОБРАБОТКА КОМАНД ---
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message, state: FSMContext):
     await state.clear()
     user_id = message.from_user.id
     bal = get_balance(user_id)
     
-    welcome_text = (
-        f"<b>САЛОМ! 👋</b>\n"
-        f"<b>DONAT SHOP 💎🇹🇯</b> — арзонтарин донат барои Free Fire ⚡\n\n"
-        f"💳 <b>Ҳисоби шумо: {bal:.2f} с.</b>\n\n"
-        f"Барои фармоиш тугмаҳоро пахш кунед 👇"
+    text = (
+        f"👋 <b>Ассалому алейкум!</b>\n"
+        f"💙 Ба боти автодонати <b>DONAT SHOP 💎🇹🇯</b> хуш омадед!\n"
+        f"----------------------------------------\n"
+        f"👤 Салом, <b>{message.from_user.first_name}</b>!\n"
+        f"💰 Баланси шумо: <b>{bal:.2f} смн</b>\n\n"
+        f"🎮 <b>Бозии худро интихоб кунед:</b>\n"
+        f"⚡ Донати зуд, осон ва боэътимод."
     )
-    await message.answer(welcome_text, reply_markup=main_menu_kb(user_id), parse_mode="HTML")
+    await message.answer(text, reply_markup=main_menu_kb(user_id), parse_mode="HTML")
 
 @dp.callback_query(F.data == "back_to_main")
 async def back_to_main(callback: types.CallbackQuery, state: FSMContext):
     await state.clear()
     user_id = callback.from_user.id
     bal = get_balance(user_id)
-    await callback.message.edit_text(
-        f"🏠 <b>Менюи асосӣ:</b>\n\n💳 <b>Ҳисоби шумо: {bal:.2f} с.</b>",
-        reply_markup=main_menu_kb(user_id),
-        parse_mode="HTML"
+    text = (
+        f"👋 <b>Ассалому алейкум!</b>\n"
+        f"👤 Салом, <b>{callback.from_user.first_name}</b>!\n"
+        f"💰 Баланси шумо: <b>{bal:.2f} смн</b>"
     )
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
+    await callback.message.answer(text, reply_markup=main_menu_kb(user_id), parse_mode="HTML")
     await callback.answer()
 
-# --- КАТАЛОГ FREE FIRE ---
-@dp.callback_query(F.data == "buy_ff")
-async def catalog_ff(callback: types.CallbackQuery):
-    await callback.message.edit_text(
-        f"🔥 <b>Free Fire</b>\n\nКатегорияро интихоб кунед:",
-        reply_markup=ff_categories_kb(),
-        parse_mode="HTML"
-    )
+# --- МЕНЮ ИГР С АНИМЕ ---
+@dp.callback_query(F.data == "open_games")
+async def open_games(callback: types.CallbackQuery):
+    caption = "🎮 <b>Бозиҳоро интихоб кунед:</b>"
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
+    
+    try:
+        await callback.message.answer_photo(
+            photo=ANIME_IMAGE,
+            caption=caption,
+            reply_markup=games_menu_kb(),
+            parse_mode="HTML"
+        )
+    except Exception:
+        await callback.message.answer(caption, reply_markup=games_menu_kb(), parse_mode="HTML")
     await callback.answer()
 
-@dp.callback_query(F.data == "cat_diamonds")
-async def cat_diamonds(callback: types.CallbackQuery):
-    await callback.message.edit_text("💎 <b>Пакетҳои алмосро интихоб кунед:</b>", reply_markup=ff_diamonds_kb(), parse_mode="HTML")
+# ИГРЫ
+@dp.callback_query(F.data == "game_ff")
+async def game_ff(callback: types.CallbackQuery):
+    await callback.message.edit_caption(caption="🔥 <b>Free Fire</b>\n\nКатегорияро интихоб кунед:", reply_markup=ff_categories_kb(), parse_mode="HTML")
     await callback.answer()
 
-@dp.callback_query(F.data == "cat_vouchers")
-async def cat_vouchers(callback: types.CallbackQuery):
-    await callback.message.edit_text("🎟️ <b>Ваучерҳоро интихоб кунед:</b>", reply_markup=ff_vouchers_kb(), parse_mode="HTML")
+@dp.callback_query(F.data == "cat_ff_diamonds")
+async def cat_ff_diamonds(callback: types.CallbackQuery):
+    await callback.message.edit_caption(caption="💎 <b>Пакетҳои алмосро интихоб кунед:</b>", reply_markup=ff_diamonds_kb(), parse_mode="HTML")
     await callback.answer()
 
+@dp.callback_query(F.data == "cat_ff_vouchers")
+async def cat_ff_vouchers(callback: types.CallbackQuery):
+    await callback.message.edit_caption(caption="🎟️ <b>Ваучерҳоро интихоб кунед:</b>", reply_markup=ff_vouchers_kb(), parse_mode="HTML")
+    await callback.answer()
+
+@dp.callback_query(F.data == "game_pubg")
+async def game_pubg(callback: types.CallbackQuery):
+    await callback.message.edit_caption(caption="🎯 <b>PUBG Mobile</b>\n\nБастаи лозимиро интихоб кунед:", reply_markup=pubg_items_kb(), parse_mode="HTML")
+    await callback.answer()
+
+@dp.callback_query(F.data == "game_codm")
+async def game_codm(callback: types.CallbackQuery):
+    await callback.message.edit_caption(caption="🔫 <b>Call of Duty Mobile</b>\n\nБастаи лозимиро интихоб кунед:", reply_markup=codm_items_kb(), parse_mode="HTML")
+    await callback.answer()
+
+# ВЫБОР ТОВАРА
 @dp.callback_query(F.data.startswith("item_"))
 async def select_item(callback: types.CallbackQuery, state: FSMContext):
     parts = callback.data.split("_")
-    code = parts[1]
-    price = float(parts[2])
+    game_code = parts[1]
+    item_code = parts[2]
+    price = float(parts[3])
 
-    names = {
-        "100": "🛒 100 💎 + 10 💎 бонус",
-        "310": "🛒 310 💎 + 30 💎 бонус",
-        "520": "🛒 520 💎 + 50 💎 бонус",
-        "1060": "🛒 1060 💎 + 100 💎 бонус",
-        "vlite": "🔹 Ваучери Лайт (Weekly Lite)",
-        "vweek": "💳 Ваучери Ҳафтаина (Weekly)",
-        "vmonth": "🌟 Ваучери Моҳона (Monthly)"
-    }
-    item_name = names.get(code, "Маҳсулоти Free Fire")
+    if game_code == "ff":
+        item_names = {"100": "100 💎 + 10 💎", "310": "310 💎 + 30 💎", "520": "520 💎 + 50 💎", "1060": "1060 💎 + 100 💎", "vlite": "Ваучери Лайт", "vweek": "Ваучери Ҳафтаина", "vmonth": "Ваучери Моҳона"}
+    elif game_code == "pubg":
+        item_names = {"60": "60 UC", "325": "300 + 25 UC", "660": "600 + 60 UC", "1800": "1500 + 300 UC", "3850": "3000 + 850 UC", "8100": "6000 + 2100 UC"}
+    else:
+        item_names = {"80": "80 CP", "420": "420 CP", "880": "880 CP"}
 
-    await state.update_data(item_name=item_name, price=price)
+    item_name = item_names.get(item_code, "Донат")
+    await state.update_data(game_code=game_code, item_name=item_name, price=price)
     await state.set_state(BuyState.waiting_for_uid)
-    
-    await callback.message.edit_text(
-        f"🛒 Шумо интихоб кардед: <b>{item_name}</b>\n"
-        f"💰 Нарх: <b>{price:.2f} с.</b>\n\n"
-        f"🆔 <b>Player ID</b>-и худро дар Free Fire фиристед (танҳо рақамҳо):",
-        reply_markup=back_main_kb(),
-        parse_mode="HTML"
+
+    text = (
+        f"🛒 <b>{item_name}</b>\n"
+        f"----------------------------------------\n"
+        f"💰 Нарх: <b>{price:.2f} смн</b>\n\n"
+        f"🆔 Отправьте ваш <b>Player ID</b> (только цифры):"
     )
+    await callback.message.answer(text, reply_markup=back_main_kb(), parse_mode="HTML")
     await callback.answer()
 
+# ВВОД И ПРОВЕРКА ID
 @dp.message(BuyState.waiting_for_uid)
-async def process_buy_uid(message: types.Message, state: FSMContext):
+async def process_uid(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
     uid_text = message.text.strip()
-    
-    wait_msg = await message.answer("🔍 <i>Player ID дар сервер тафтиш шуда истодааст...</i>", parse_mode="HTML")
-
-    is_valid, player_name = await check_freefire_id(uid_text)
-    
-    try:
-        await wait_msg.delete()
-    except Exception:
-        pass
-
-    if not is_valid:
-        await message.answer(
-            "❌ <b>Player ID хато ворид карда шуд!</b>\n\n"
-            "Илтимос, рақамҳои ID-ро дуруст тафтиш карда аз нав фиристед:",
-            parse_mode="HTML",
-            reply_markup=back_main_kb()
-        )
-        return
-
     data = await state.get_data()
+    game_code = data.get("game_code")
     item_name = data.get("item_name")
     price = data.get("price")
+
+    is_valid, player_name = await check_player_id(game_code, uid_text)
     bal = get_balance(user_id)
-    after_bal = bal - price
 
     await state.update_data(user_uid=uid_text, player_name=player_name)
     await state.set_state(BuyState.confirm_payment)
 
     text = (
-        f"📄 <b>Тасдиқи фармоиш</b>\n\n"
-        f"📦 Мол: <b>{item_name}</b>\n"
-        f"🆔 ID-и бозигар: <code>{uid_text}</code>\n"
-        f"👤 Никнейм дар бозӣ: <b>{player_name}</b>\n\n"
-        f"💰 Нарх: <b>{price:.2f} с.</b>\n"
-        f"💳 Ҳисоби шумо: <b>{bal:.2f} с.</b>\n"
-        f"💵 Пас аз харид: <b>{after_bal:.2f} с.</b>\n\n"
+        f"💳 <b>Выберите способ оплаты</b>\n"
+        f"----------------------------------------\n"
+        f"📦 {item_name}\n"
+        f"💰 Цена: <b>{price:.2f} смн</b>\n"
+        f"👤 {player_name}\n"
+        f"🆔 {uid_text}\n\n"
+        f"💼 Ваш баланс: <b>{bal:.2f} смн</b>\n"
+        f"⚡ Оплата с баланса — донат сразу."
     )
 
-    if bal >= price:
-        text += "Барои пардохт тугмаи поёнро пахш кунед 👇"
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="💰 Пардохт кардан", callback_data="pay_from_balance")],
-            [InlineKeyboardButton(text="❌ Бекор кардан", callback_data="back_to_main")]
-        ])
-    else:
-        text += "⚠️ <b>Дар ҳисоби шумо маблағ кофӣ нест!</b>\nИлтимос, аввал ҳисобро пур кунед."
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="💳 Пур кардани ҳисоб", callback_data="deposit_start")],
-            [InlineKeyboardButton(text="❌ Бекор кардан", callback_data="back_to_main")]
-        ])
-
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💰 Оплатить с баланса", callback_data="pay_bal")],
+        [InlineKeyboardButton(text="💳 Оплатить картой (чек)", callback_data="pay_card")],
+        [InlineKeyboardButton(text="🏠 Менюи асосӣ", callback_data="back_to_main")]
+    ])
     await message.answer(text, reply_markup=kb, parse_mode="HTML")
 
-@dp.callback_query(BuyState.confirm_payment, F.data == "pay_from_balance")
-async def pay_from_balance(callback: types.CallbackQuery, state: FSMContext):
+# ОПЛАТА С БАЛАНСА
+@dp.callback_query(BuyState.confirm_payment, F.data == "pay_bal")
+async def pay_bal(callback: types.CallbackQuery, state: FSMContext):
     user_id = callback.from_user.id
     data = await state.get_data()
-    item_name = data.get("item_name")
     price = data.get("price")
-    user_uid = data.get("user_uid")
-    player_name = data.get("player_name")
-
     bal = get_balance(user_id)
+
     if bal < price:
-        await callback.answer("⚠️ Маблағ кофӣ нест!", show_alert=True)
+        await callback.answer("⚠️ Не хватает баланса!", show_alert=True)
         return
 
     update_balance(user_id, -price)
-    new_bal = get_balance(user_id)
     order_id = random.randint(2000, 9999)
 
-    admin_order_msg = (
-        f"🚀 <b>НОВЫЙ ЗАКАЗ (ОПЛАЧЕНО С БАЛАНСА)!</b>\n\n"
+    await bot.send_message(
+        ADMIN_ID,
+        f"🚀 <b>НОВЫЙ ЗАКАЗ С БАЛАНСА!</b>\n\n"
         f"📄 Заказ №: <b>#{order_id}</b>\n"
         f"👤 Клиент: <a href='tg://user?id={user_id}'>{callback.from_user.first_name}</a>\n"
-        f"📦 Товар: <b>{item_name}</b>\n"
-        f"🎮 Free Fire ID: <code>{user_uid}</code>\n"
-        f"👤 Ник в игре: <b>{player_name}</b>\n"
-        f"💰 Списано: <b>{price:.2f} с.</b>"
+        f"📦 Товар: <b>{data.get('item_name')}</b>\n"
+        f"🎮 Player ID: <code>{data.get('user_uid')}</code>\n"
+        f"👤 Ник: <b>{data.get('player_name')}</b>\n"
+        f"💰 Списано: <b>{price:.2f} смн</b>",
+        parse_mode="HTML"
     )
-    await bot.send_message(chat_id=ADMIN_ID, text=admin_order_msg, parse_mode="HTML")
 
-    receipt_text = (
-        f"📄 <b>ЧЕКИ ХАРИД</b>\n"
-        f"----------------------------------------\n"
-        f"✅ <b>Ҳолат: БОМУВАФФАҚИЯТ</b>\n"
-        f"🔢 Фармоиш: <b>#{order_id}</b>\n"
-        f"🆔 ID: <code>{user_uid}</code>\n"
-        f"👤 Никнейм: <b>{player_name}</b>\n"
-        f"📦 Мол: <b>{item_name}</b>\n"
-        f"💰 Маблағ: <b>{price:.2f} с.</b>\n"
-        f"💳 Ҳисоби нав: <b>{new_bal:.2f} с.</b>\n"
-        f"----------------------------------------\n"
-        f"🎉 <b>Хариди шумо иҷро шуд!</b>\n\n"
-        f"Ташаккур барои харид! ❤️"
+    await callback.message.edit_text(
+        f"✅ <b>Заказ #{order_id} успешно выполнен!</b>\n\n"
+        f"Спасибо за покупку! ❤️",
+        reply_markup=main_menu_kb(user_id),
+        parse_mode="HTML"
     )
-    await callback.message.edit_text(receipt_text, reply_markup=main_menu_kb(user_id), parse_mode="HTML")
     await state.clear()
-    await callback.answer()
 
-# --- ПОПОЛНЕНИЕ БАЛАНСА ---
-@dp.callback_query(F.data == "deposit_start")
-async def deposit_start(callback: types.CallbackQuery):
-    user_id = callback.from_user.id
-    bal = get_balance(user_id)
-    text = (
-        f"💳 <b>Пур кардани ҳисоб</b>\n\n"
-        f"Ҳисоби ҳозира: <b>{bal:.2f} с.</b>\n\n"
-        f"Маблағро интихоб кунед ё худатон нависед.\n"
-        f"<i>Аз 5.00 с. то 5000.00 с.</i>"
-    )
-    await callback.message.edit_text(text, reply_markup=deposit_amounts_kb(), parse_mode="HTML")
-    await callback.answer()
+# ОПЛАТА КАРТОЙ (ЧЕК)
+@dp.callback_query(BuyState.confirm_payment, F.data == "pay_card")
+async def pay_card(callback: types.CallbackQuery):
+    await callback.message.edit_text("💳 <b>Выберите банк:</b>", reply_markup=bank_choice_kb(), parse_mode="HTML")
 
-@dp.callback_query(F.data.startswith("dep_"))
-async def process_dep_choice(callback: types.CallbackQuery, state: FSMContext):
-    choice = callback.data.split("_")[1]
-    if choice == "custom":
-        await state.set_state(DepositState.waiting_for_amount)
-        await callback.message.edit_text("✏️ <b>Маблағи дилхоҳро бо рақам ворид кунед (масалан: 15):</b>", reply_markup=back_main_kb(), parse_mode="HTML")
-    else:
-        amount = float(choice)
-        await setup_deposit_invoice(callback.message, state, amount, is_edit=True)
-    await callback.answer()
-
-@dp.message(DepositState.waiting_for_amount)
-async def process_custom_amount(message: types.Message, state: FSMContext):
-    try:
-        amount = float(message.text.replace(",", "."))
-        if amount < 5 or amount > 5000:
-            await message.answer("⚠️ Маблағ бояд аз 5.00 с. то 5000.00 с. бошад!")
-            return
-        await setup_deposit_invoice(message, state, amount, is_edit=False)
-    except ValueError:
-        await message.answer("⚠️ ИЛТИМОС, танҳо рақам ворид кунед!")
-
-async def setup_deposit_invoice(message_obj, state: FSMContext, amount: float, is_edit: bool = False):
-    pay_code = random.randint(1000, 9999)
-    order_num = random.randint(2000, 9999)
-    
-    await state.update_data(deposit_amount=amount, pay_code=pay_code, order_num=order_num)
-    await state.set_state(DepositState.waiting_for_receipt)
-    
-    text = (
-        f"💳 <b>Реквизитҳо барои пардохт</b>\n\n"
-        f"🏦 <b>Душанбе Сити:</b>\n"
-        f"💳 Карт: <code>{DC_CARD}</code>\n"
-        f"👤 Ном: <b>{DC_NAME}</b>\n\n"
-        f"📲 <b>Alif Mobi:</b>\n"
-        f"🔢 Ҳисоб: <code>{ALIF_ACCOUNT}</code>\n\n"
-        f"💰 <b>Маблағ: {amount:.2f} с.</b>\n\n"
-        f"🔑 <b>Коди тасдиқ: {pay_code}</b>\n"
-        f"<i>Ин кодро ҳатман дар «Шарҳ / Комментарий»-и ҳавола нависед!</i>\n\n"
-        f"📄 Рақами пардохт: <b>#{order_num}</b>\n\n"
-        f"Пас аз ҳавола, чек ё скриншоти пардохтро дар ҳамин ҷо фиристед."
-    )
-    
-    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="❌ Бекор кардан", callback_data="back_to_main")]])
-    if is_edit:
-        await message_obj.edit_text(text, reply_markup=kb, parse_mode="HTML")
-    else:
-        await message_obj.answer(text, reply_markup=kb, parse_mode="HTML")
-
-@dp.message(DepositState.waiting_for_receipt, F.photo)
-async def process_deposit_receipt(message: types.Message, state: FSMContext):
+@dp.callback_query(F.data.startswith("bank_"))
+async def choose_bank(callback: types.CallbackQuery, state: FSMContext):
+    bank = callback.data.split("_")[1]
     data = await state.get_data()
-    amount = data.get("deposit_amount")
-    order_num = data.get("order_num")
-    pay_code = data.get("pay_code")
-    user_id = message.from_user.id
-    
-    admin_kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=f"✅ Тасдиқ (+{amount:.2f} с.)", callback_data=f"approve_dep_{user_id}_{amount}_{order_num}")],
-        [InlineKeyboardButton(text="❌ Рaд кардан", callback_data=f"reject_dep_{user_id}_{order_num}")]
-    ])
-    
-    admin_msg = (
-        f"📥 <b>ЗАПРОС НА ПОПОЛНЕНИЕ БАЛАНСА!</b>\n\n"
-        f"👤 Клиент: <a href='tg://user?id={user_id}'>{message.from_user.first_name}</a>\n"
-        f"🆔 Telegram ID: <code>{user_id}</code>\n"
-        f"📄 Номер заявки: <b>#{order_num}</b>\n"
-        f"💰 Сумма: <b>{amount:.2f} с.</b>\n"
-        f"🔑 Код комментария: <b>{pay_code}</b>"
+    price = data.get("price")
+
+    acc = DC_CARD if bank == "dc" else ALIF_ACCOUNT
+    bank_name = "Dushanbe City" if bank == "dc" else "Alif Mobi"
+
+    text = (
+        f"💳 <b>ОПЛАТА</b>\n"
+        f"----------------------------------------\n"
+        f"📦 {data.get('item_name')}\n"
+        f"👤 {data.get('player_name')}\n"
+        f"🆔 <code>{data.get('user_uid')}</code>\n\n"
+        f"💰 Сумма: <b>{price:.2f} смн</b>\n"
+        f"🏦 <b>{bank_name}:</b> <code>{acc}</code>\n\n"
+        f"📸 Отправьте фото чека прямо здесь."
     )
-    
+    await state.set_state(BuyState.waiting_for_direct_receipt)
+    await callback.message.edit_text(text, parse_mode="HTML")
+
+@dp.message(BuyState.waiting_for_direct_receipt, F.photo)
+async def process_direct_receipt(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    user_id = message.from_user.id
     photo_id = message.photo[-1].file_id
-    await bot.send_photo(chat_id=ADMIN_ID, photo=photo_id, caption=admin_msg, reply_markup=admin_kb, parse_mode="HTML")
-    
-    await message.answer(
-        f"⏳ <b>Пардохти шумо ба тафтиш рафт.</b>\n"
-        f"📄 Рақами пардохт: <b>#{order_num}</b>\n\n"
-        f"Чек кабул шуд! Одатан тафтиш 5–15 дақиқа вақт мегирад.",
+
+    await bot.send_photo(
+        ADMIN_ID,
+        photo=photo_id,
+        caption=f"📥 <b>ЗАКАЗ С ЧЕКОМ!</b>\n\n"
+                f"👤 Клиент: <a href='tg://user?id={user_id}'>{message.from_user.first_name}</a>\n"
+                f"📦 Товар: <b>{data.get('item_name')}</b>\n"
+                f"🎮 ID: <code>{data.get('user_uid')}</code>\n"
+                f"👤 Ник: <b>{data.get('player_name')}</b>\n"
+                f"💰 Сумма: <b>{data.get('price'):.2f} смн</b>",
+        parse_mode="HTML"
+    )
+    await message.answer("⏳ Чек принят на проверку! Ожидайте 5-15 минут.", reply_markup=main_menu_kb(user_id))
+    await state.clear()
+
+# ПОПОЛНЕНИЕ БАЛАНСА
+@dp.callback_query(F.data == "deposit_start")
+async def deposit_start(callback: types.CallbackQuery, state: FSMContext):
+    await state.set_state(DepositState.waiting_for_amount)
+    await callback.message.edit_text(
+        "➕ <b>ПОПОЛНЕНИЕ БАЛАНСА</b>\n"
+        "----------------------------------------\n"
+        "Введите сумму пополнения в сомони (от 5 до 500):",
         reply_markup=back_main_kb(),
         parse_mode="HTML"
     )
-    await state.clear()
 
-@dp.callback_query(F.data.startswith("approve_dep_"))
-async def admin_approve_dep(callback: types.CallbackQuery):
-    parts = callback.data.split("_")
-    target_user_id = int(parts[2])
-    amount = float(parts[3])
-    
-    update_balance(target_user_id, amount)
-    new_bal = get_balance(target_user_id)
-    
-    await callback.message.edit_caption(
-        caption=callback.message.caption + f"\n\n✅ <b>ПОДТВЕРЖДЕНО! Начислено {amount:.2f} с.</b>",
-        parse_mode="HTML"
-    )
-    
+@dp.message(DepositState.waiting_for_amount)
+async def deposit_amount(message: types.Message, state: FSMContext):
     try:
-        await bot.send_message(
-            chat_id=target_user_id,
-            text=f"✅ <b>Ҳисоб пур шуд!</b>\n\n➕ <b>+{amount:.2f} с.</b>\n💳 <b>Ҳисоби нав: {new_bal:.2f} с.</b>",
-            parse_mode="HTML"
-        )
-    except Exception:
-        pass
-    await callback.answer("Успешно начислено!")
+        amount = float(message.text.replace(",", "."))
+        await state.update_data(amount=amount)
+        await message.answer("💳 Выберите банк для пополнения:", reply_markup=bank_choice_kb())
+    except ValueError:
+        await message.answer("Илтимос, танҳо рақам ворид кунед!")
 
-@dp.callback_query(F.data.startswith("reject_dep_"))
-async def admin_reject_dep(callback: types.CallbackQuery):
-    parts = callback.data.split("_")
-    target_user_id = int(parts[2])
-    
-    await callback.message.edit_caption(
-        caption=callback.message.caption + "\n\n❌ <b>ОТКЛОНЕНО АДМИНИСТРАТОРОМ.</b>",
-        parse_mode="HTML"
-    )
-    try:
-        await bot.send_message(
-            chat_id=target_user_id,
-            text="❌ <b>Пардохти шумо тасдиқ нашуд.</b>",
-            parse_mode="HTML"
-        )
-    except Exception:
-        pass
-    await callback.answer("Отклонено!")
-
-# --- МИНИ-ВЕБСЕРВЕР ДЛЯ РЕНДЕРА (ЧТОБЫ СЕРВЕР НЕ ОТКЛЮЧАЛ БОТА) ---
+# РЕНДЕР ВЕБ-СЕРВЕР
 async def handle_ping(request):
-    return web.Response(text="Bot is live!")
+    return web.Response(text="Bot Live!")
 
 async def start_web_server():
     app = web.Application()
     app.router.add_get("/", handle_ping)
-    app.router.add_get("/health", handle_ping)
     runner = web.AppRunner(app)
     await runner.setup()
     port = int(os.environ.get("PORT", 10000))
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
-    print(f"Веб-сервер запущен на порту {port}")
 
 async def main():
-    print("Запуск бота и веб-сервера...")
     await start_web_server()
     await dp.start_polling(bot)
 
